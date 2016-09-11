@@ -173,14 +173,14 @@ class FFLeague:
 
     def merge_proj_scores(self, week, all_players=True):
 
-        proj_fname = glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week))[-1]
-        score_fname = glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week))[-1]
+        proj_fname = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))[-1]
+        score_fname = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))[-1]
         proj = pd.read_csv(proj_fname)
         score = pd.read_csv(score_fname)
         pp = pd.merge(proj, score, on=['Player', 'Team', 'Pos'], how='outer', suffixes=['_proj', '_real'])
 
         if self.league_id:
-            roster_fname = glob.glob(os.path.join(self.team_dir, 'Rosters*.csv'))[-1]
+            roster_fname = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters*.csv')))[-1]
             rosters = pd.read_csv(roster_fname)
             if all_players:
                 how = 'outer'
@@ -202,7 +202,7 @@ class FFLeague:
                                                 'FFPts_real': np.sum,
                                                 'Player': lambda x: ' & '.join(x)})
         pl.reset_index(inplace=True)
-        pl.fillna(0, inplace=True)
+        pl.fillna("null", inplace=True)
         gb = pl.groupby('Owner')
         for owner in gb.groups:
             out, data_out = {}, []
