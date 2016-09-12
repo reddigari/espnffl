@@ -167,11 +167,11 @@ class FFLeague:
         score.reset_index(drop=True, inplace=True)
 
         if write:
-            score.to_csv(os.path.join(self.score_dir, 'Scores_2016Wk%d_%s.csv' %(week, time.strftime('%Y%m%d'))), index=False)
+            score.to_csv(os.path.join(self.score_dir, 'Scores_2016Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
 
         return score
 
-    def merge_proj_scores(self, week, all_players=True):
+    def merge_proj_scores(self, week, all_players=True, return_scoretime=False):
 
         proj_fname = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))[-1]
         score_fname = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))[-1]
@@ -190,13 +190,20 @@ class FFLeague:
             if not all_players:
                 assert pp.shape[0] == rosters.shape[0]
 
-        return pp
+        score_time = os.path.basename(score_fname).split('_')[-1].replace('.csv', '')
+        score_time = time.strptime(score_time, '%Y%m%d%H%M')
+        score_time = time.strftime('%A %m/%d at %I:%M %p', score_time)
+
+        if return_scoretime:
+            return pp, score_time
+        else:
+            return pp
 
     def output_vis_json(self, week):
         if not self.league_id:
             raise RuntimeError("Cannot output team data without ESPN league ID.")
-        json_out = []
-        pp = self.merge_proj_scores(week, all_players=False)
+        pp, score_time = self.merge_proj_scores(week, all_players=False, return_scoretime=True)
+        json_out = [{'scoreTime': score_time}]
         order = ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST', 'FLEX']
         pl = pp.groupby(['Owner', 'Slot']).agg({'FFPts_proj': np.sum,
                                                 'FFPts_real': np.sum,
