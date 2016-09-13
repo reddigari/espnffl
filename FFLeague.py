@@ -77,11 +77,20 @@ class FFLeague:
         columns = ['Player', 'OwnCode', 'Action', 'Opp', 'GameTime', 'Cmp_Att',
                    'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds', 'RsTD', 'Rec',
                    'RcYds', 'RcTD', 'FFPts']
+        k_columns = ['Player', 'OwnCode', 'Action', 'Opp', 'GameTime', '1_39',
+                     '40_49', '50plus', 'KTot', 'XP', 'FFPts']
+
+        all_columns = ['Player', 'OwnCode', 'Action', 'Team', 'Pos', 'Opp', 'GameTime',
+                       'Cmp_Att', 'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds',
+                       'RsTD', 'Rec', 'RcYds', 'RcTD', '1_39', '40_49',
+                       '50plus', 'KTot', 'XP', 'FFPts']
 
         if self.league_id:
             url_str += '&leagueId=%s' %self.league_id
         else:
             columns = [i for i in columns if i not in ['OwnCode', 'Action']]
+            k_columns = [i for i in k_columns if i not in ['OwnCode', 'Action']]
+            all_columns = [i for i in all_columns if i not in ['OwnCode', 'Action']]
 
         proj = pd.DataFrame()
 
@@ -98,7 +107,10 @@ class FFLeague:
                 if d.shape[0] == 1:
                     break
                 d.drop(range(2), inplace=True)
-                d.columns = columns
+                if pos == 'K':
+                    d.columns = k_columns
+                else:
+                    d.columns = columns
                 d.insert(2, 'Pos', pos)
                 proj = pd.concat([proj, d])
                 # ESPN shows 40 players per page
@@ -113,6 +125,7 @@ class FFLeague:
         proj = proj.apply(pd.to_numeric, errors='ignore')
 
         proj.reset_index(drop=True, inplace=True)
+        proj = proj.reindex_axis(all_columns, 1)
 
         if write:
             proj.to_csv(os.path.join(self.proj_dir, 'Projections_2016Wk%d_%s.csv' %(week, time.strftime('%Y%m%d'))), index=False)
