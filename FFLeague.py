@@ -30,7 +30,7 @@ class FFLeague:
     def __repr__(self):
         return '<%s - ESPN League: %s>' %(self.name, self.league_id)
 
-    def get_rosters(self, write=True):
+    def get_rosters(self, week, write=True):
         if not self.league_id:
             raise RuntimeError("Cannot get rosters without ESPN league ID.")
         url = 'http://games.espn.com/ffl/leaguerosters?leagueId=%s' %self.league_id
@@ -64,8 +64,8 @@ class FFLeague:
         teams = teams.reindex_axis(['Owner', 'Team', 'W', 'L'], axis=1)
 
         if write:
-            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_%s.csv' %time.strftime('%Y%m%d')), index=False)
-            teams.to_csv(os.path.join(self.team_dir, 'TeamInfo_%s.csv' %time.strftime('%Y%m%d')), index=False)
+            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
+            teams.to_csv(os.path.join(self.team_dir, 'TeamInfo_Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
 
         self.rosters = rosters
         self.team_info = teams
@@ -193,7 +193,7 @@ class FFLeague:
         pp = pd.merge(proj, score, on=['Player', 'Team', 'Pos'], how='outer', suffixes=['_proj', '_real'])
 
         if self.league_id:
-            roster_fname = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters*.csv')))[-1]
+            roster_fname = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))[-1]
             rosters = pd.read_csv(roster_fname)
             if all_players:
                 how = 'outer'
