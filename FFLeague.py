@@ -128,7 +128,7 @@ class FFLeague:
         proj = proj.reindex_axis(all_columns, 1)
 
         if write:
-            proj.to_csv(os.path.join(self.proj_dir, 'Projections_2016Wk%d_%s.csv' %(week, time.strftime('%Y%m%d'))), index=False)
+            proj.to_csv(os.path.join(self.proj_dir, 'Projections_2016Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
 
         return proj
 
@@ -184,13 +184,14 @@ class FFLeague:
 
         return score
 
-    def merge_proj_scores(self, week, all_players=True, return_scoretime=False):
+    def merge_proj_scores(self, week, all_players=True, return_times=False):
 
         proj_fname = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))[-1]
         score_fname = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))[-1]
         proj = pd.read_csv(proj_fname)
         score = pd.read_csv(score_fname)
         pp = pd.merge(proj, score, on=['Player', 'Team', 'Pos'], how='outer', suffixes=['_proj', '_real'])
+        roster_fname = None
 
         if self.league_id:
             roster_fname = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))[-1]
@@ -203,20 +204,24 @@ class FFLeague:
             if not all_players:
                 assert pp.shape[0] == rosters.shape[0]
 
-        score_time = os.path.basename(score_fname).split('_')[-1].replace('.csv', '')
-        score_time = time.strptime(score_time, '%Y%m%d%H%M')
-        score_time = time.strftime('%A %m/%d at %I:%M %p', score_time)
+        times = {}
+        for label, fname in zip(['projTime', 'scoreTime', 'rosterTime'], [proj_fname, score_fname, roster_fname]):
+            if fname:
+                time_str = os.path.basename(fname).split('_')[-1].replace('.csv', '')
+                time_str = time.strptime(time_str, '%Y%m%d%H%M')
+                time_str = time.strftime('%A %m/%d at %I:%M %p', time_str)
+                times[label] = time_str
 
-        if return_scoretime:
-            return pp, score_time
+        if return_times:
+            return pp, times
         else:
             return pp
 
     def output_vis_json(self, week):
         if not self.league_id:
             raise RuntimeError("Cannot output team data without ESPN league ID.")
-        pp, score_time = self.merge_proj_scores(week, all_players=False, return_scoretime=True)
-        json_out = [{'scoreTime': score_time}]
+        pp, times = self.merge_proj_scores(week, all_players=False, return_times=True)
+        json_out = [times]
         order = ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST', 'FLEX']
         pl = pp.groupby(['Owner', 'Slot']).agg({'FFPts_proj': np.sum,
                                                 'FFPts_real': np.sum,
