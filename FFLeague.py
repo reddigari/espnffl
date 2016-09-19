@@ -22,8 +22,9 @@ class FFLeague:
         self.team_dir = os.path.join(self.path, 'Teams')
         self.proj_dir = os.path.join(self.path, 'Projections', 'ESPN')
         self.score_dir = os.path.join(self.path, 'Scores', 'ESPN')
+        self.vis_dir = os.path.join(self.path, 'Visualizations')
 
-        for dirname in [self.team_dir, self.proj_dir, self.score_dir]:
+        for dirname in [self.team_dir, self.proj_dir, self.score_dir, self.vis_dir]:
             if not os.path.exists(dirname):
                 os.makedirs(dirname)
 
@@ -204,20 +205,21 @@ class FFLeague:
             if not all_players:
                 assert pp.shape[0] == rosters.shape[0]
 
-        times = {}
-        for label, fname in zip(['projTime', 'scoreTime', 'rosterTime'], [proj_fname, score_fname, roster_fname]):
-            if fname:
-                time_str = os.path.basename(fname).split('_')[-1].replace('.csv', '')
-                time_str = time.strptime(time_str, '%Y%m%d%H%M')
-                time_str = time.strftime('%A %m/%d at %I:%M %p', time_str)
-                times[label] = time_str
-
         if return_times:
+            times = {}
+            for label, fname in zip(['projTime', 'scoreTime', 'rosterTime'], [proj_fname, score_fname, roster_fname]):
+                if fname:
+                    time_str = os.path.basename(fname).split('_')[-1].replace('.csv', '')
+                    time_str = time.strptime(time_str, '%Y%m%d%H%M')
+                    time_str = time.strftime('%A %m/%d at %I:%M %p', time_str)
+                    times[label] = time_str
+
             return pp, times
+
         else:
             return pp
 
-    def output_vis_json(self, week):
+    def output_week_vis_json(self, week):
         if not self.league_id:
             raise RuntimeError("Cannot output team data without ESPN league ID.")
         pp, times = self.merge_proj_scores(week, all_players=False, return_times=True)
@@ -241,9 +243,34 @@ class FFLeague:
                 out['data'] = data_out
             json_out.append(out)
 
-        vis_dir = os.path.join(self.path, 'Visualizations')
-        if not os.path.exists(vis_dir):
-            os.mkdir(vis_dir)
+        with open(os.path.join(self.vis_dir, 'wk%d.json' %week), 'w') as f:
+            json.dump(json_out, f)
 
-        with open(os.path.join(vis_dir, 'wk%d.json' %week), 'w') as f:
+    def output_team_vs_average_json(self, max_week):
+        if not self.league_id:
+            raise RuntimeError("Cannot output team data without ESPN league ID.")
+
+        json_out = []
+        data = pd.DataFrame()
+        for week in range(1, max_week+1):
+            pp = self.merge_proj_scores(week, all_players=False)
+            data = pd.concat([data, pp])
+
+        team_aves = data.groupby(['Owner', 'Slot']).sum()['FFPts_real']/float(max_week)
+        team_aves = team_aves.reset_index()
+        lg_aves = data.groupby(['Slot']).sum()['FFPts_real']/(float(max_week)*len(self.owners))
+        team_aves['Pct'] = team_aves.apply(lambda r: (r['FFPts_real']-lg_aves[r['Slot']])/lg_aves[r['Slot']], 1)
+        order = ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST', 'FLEX']
+        gb = team_aves.groupby('Owner')
+
+        for owner, d in gb:
+            d = d.set_index('Slot')
+            out = {'Owner': owner, 'data': []}
+            for pos in order:
+                out['data'].append({'Slot': pos,
+                                    'FFPts': d.ix[pos]['FFPts_real'],
+                                    'Pct': d.ix[pos]['Pct']})
+            json_out.append(out)
+
+        with open(os.path.join(self.vis_dir, 'teams_vs_average.json'), 'w') as f:
             json.dump(json_out, f)
