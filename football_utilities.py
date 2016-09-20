@@ -56,3 +56,5 @@ def split_espn_plr(x):
     name = name.replace('*', '')
     team = get_team_abbr(team)
     return name, team, pos
+
+fantasy_slots = ['QB', 'RB', 'WR', 'TE', 'D/ST', 'K', 'FLEX']

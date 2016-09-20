@@ -256,6 +256,11 @@ class FFLeague:
             pp = self.merge_proj_scores(week, all_players=False)
             data = pd.concat([data, pp])
 
+        # get team info (with WL) from the first file scraped after the week switches over
+        info_fname = sorted(glob.glob(os.path.join(self.path, 'Teams', 'TeamInfo*Wk%d*.csv' %(max_week+1))))[0]
+        info = pd.read_csv(info_fname).set_index('Owner')
+        info['record'] = info.apply(lambda r: '%d-%d' %(r['W'], r['L']), 1)
+
         team_aves = data.groupby(['Owner', 'Slot']).sum()['FFPts_real']/float(max_week)
         team_aves = team_aves.reset_index()
         lg_aves = data.groupby(['Slot']).sum()['FFPts_real']/(float(max_week)*len(self.owners))
@@ -265,7 +270,7 @@ class FFLeague:
 
         for owner, d in gb:
             d = d.set_index('Slot')
-            out = {'Owner': owner, 'data': []}
+            out = {'Owner': owner, 'Record': info.ix[owner, 'record'], 'data': []}
             for pos in order:
                 out['data'].append({'Slot': pos,
                                     'FFPts': d.ix[pos]['FFPts_real'],
