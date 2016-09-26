@@ -185,25 +185,36 @@ class FFLeague:
 
         return score
 
-    def merge_proj_scores(self, week, all_players=True, return_times=False):
+    def merge_proj_scores(self, week, all_players=True, prev_weeks=False, return_times=False):
 
-        proj_fname = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))[-1]
-        score_fname = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))[-1]
-        proj = pd.read_csv(proj_fname)
-        score = pd.read_csv(score_fname)
-        pp = pd.merge(proj, score, on=['Player', 'Team', 'Pos'], how='outer', suffixes=['_proj', '_real'])
-        roster_fname = None
+        if prev_weeks:
+            weeks = np.arange(1, week+1)
+        else:
+            weeks = [week]
 
-        if self.league_id:
-            roster_fname = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))[-1]
-            rosters = pd.read_csv(roster_fname)
-            if all_players:
-                how = 'outer'
-            else:
-                how = 'inner'
-            pp = pd.merge(rosters, pp, on=['Player', 'Team', 'Pos'], how=how)
-            if not all_players:
-                assert pp.shape[0] == rosters.shape[0]
+        out = pd.DataFrame()
+        for week in weeks:
+            proj_fname = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))[-1]
+            score_fname = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))[-1]
+            proj = pd.read_csv(proj_fname)
+            score = pd.read_csv(score_fname)
+            pp = pd.merge(proj, score, on=['Player', 'Team', 'Pos'], how='outer', suffixes=['_proj', '_real'])
+            roster_fname = None
+
+            if self.league_id:
+                roster_fname = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))[-1]
+                rosters = pd.read_csv(roster_fname)
+                if all_players:
+                    how = 'outer'
+                else:
+                    how = 'inner'
+                pp = pd.merge(rosters, pp, on=['Player', 'Team', 'Pos'], how=how)
+                if not all_players:
+                    assert pp.shape[0] == rosters.shape[0]
+
+            out = pd.concat([out, pp])
+
+        pp = out
 
         if return_times:
             times = {}
