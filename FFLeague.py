@@ -212,6 +212,7 @@ class FFLeague:
                 if not all_players:
                     assert pp.shape[0] == rosters.shape[0]
 
+            pp.insert(1, 'Week', week)
             out = pd.concat([out, pp])
 
         pp = out
