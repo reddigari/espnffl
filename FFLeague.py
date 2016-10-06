@@ -241,6 +241,7 @@ class FFLeague:
                                                 'FFPts_real': np.sum,
                                                 'Player': lambda x: ' & '.join(x)})
         pl.reset_index(inplace=True)
+        pl.FFPts_proj.fillna(0, inplace=True)
         pl.fillna("null", inplace=True)
         gb = pl.groupby('Owner')
         for owner in gb.groups:
