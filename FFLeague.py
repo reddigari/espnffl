@@ -80,17 +80,21 @@ class FFLeague:
                    'RcYds', 'RcTD', 'FFPts']
         k_columns = ['Player', 'OwnCode', 'Action', 'Opp', 'GameTime', '1_39',
                      '40_49', '50plus', 'KTot', 'XP', 'FFPts']
+        dst_columns = ['Player', 'OwnCode', 'Action', 'Opp', 'GameTime', 'TT',
+                       'Sck', 'FumF', 'FumR', 'Int', 'IntTD', 'FumTD', 'FFPts']
 
         all_columns = ['Player', 'OwnCode', 'Action', 'Team', 'Pos', 'Opp', 'GameTime',
                        'Cmp_Att', 'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds',
                        'RsTD', 'Rec', 'RcYds', 'RcTD', '1_39', '40_49',
-                       '50plus', 'KTot', 'XP', 'FFPts']
+                       '50plus', 'KTot', 'XP', 'TT', 'Sck', 'FumF', 'FumR',
+                       'Int', 'IntTD', 'FumTD','FFPts']
 
         if self.league_id:
             url_str += '&leagueId=%s' %self.league_id
         else:
             columns = [i for i in columns if i not in ['OwnCode', 'Action']]
             k_columns = [i for i in k_columns if i not in ['OwnCode', 'Action']]
+            dst_columns = [i for i in dst_columns if i not in ['OwnCode', 'Action']]
             all_columns = [i for i in all_columns if i not in ['OwnCode', 'Action']]
 
         proj = pd.DataFrame()
@@ -110,6 +114,8 @@ class FFLeague:
                 d.drop(range(2), inplace=True)
                 if pos == 'K':
                     d.columns = k_columns
+                elif pos=='DST':
+                    d.columns = dst_columns
                 else:
                     d.columns = columns
                 d.insert(2, 'Pos', pos)
