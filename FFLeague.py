@@ -43,7 +43,7 @@ class FFLeague:
             self.owners = ['Owner%d' %i for i in range(len(d))]
         rosters = pd.DataFrame()
         teams = []
-        r = re.compile('(.*?) \((\d)-(\d)\)')
+        r = re.compile('(.*?) \((\d+)-(\d)\)')
 
         for n, roster in enumerate(d):
             m = r.match(roster.iloc[0,0])
