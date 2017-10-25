@@ -1,4 +1,4 @@
-import re
+import re,  datetime
 
 short_dict = {'DEN': ['Denver', 'Broncos'],
              'MIA': ['Miami', 'Dolphins'],
@@ -16,7 +16,7 @@ short_dict = {'DEN': ['Denver', 'Broncos'],
              'SFO': ['San Francisco', '49ers', 'SF'],
              'IND': ['Indianapolis', 'Colts'],
              'ATL': ['Atlanta', 'Falcons'],
-             'LAR': ['Los Angeles', 'Rams', 'St. Louis', 'Saint Louis', 'STL', 'LA'],
+             'LAR': ['Los Angeles Rams', 'Rams', 'St. Louis', 'Saint Louis', 'STL', 'LA'],
              'TAM': ['Tampa Bay', 'Tampa', 'Buccaneers', 'Bucs', 'TB'],
              'KAN': ['Kansas City', 'Kansas', 'Chiefs', 'KC'],
              'WAS': ['Washington', 'Redskins', 'WSH'],
@@ -27,7 +27,7 @@ short_dict = {'DEN': ['Denver', 'Broncos'],
              'SEA': ['Seattle', 'Seahawks'],
              'PIT': ['Pittsburgh', 'Steelers'],
              'CHI': ['Chicago', 'Bears'],
-             'SDG': ['San Diego', 'Chargers', 'SD'],
+             'LAC': ['Los Anglese Chargers', 'San Diego', 'Chargers', 'SD'],
              'BUF': ['Buffalo', 'Bills'],
              'DAL': ['Dallas', 'Cowboys'],
              'ARI': ['Arizona', 'Cardinals'],

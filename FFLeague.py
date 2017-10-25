@@ -1,12 +1,45 @@
 import numpy as np
 import pandas as pd
-import os, re, time, glob, requests, json, pickle
+import os, re, time, glob, requests, json, pickle, datetime
 
 from .football_utilities import *
 
+
+_score_columns = dict(OFF = ['Player', 'Opp', 'WLScore', 'Cmp_Att',
+                             'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds', 'RsTD', 'Rec',
+                             'RcYds', 'RcTD', 'Tgt', '2PC', 'FumL', 'MiscTD', 'FFPts'],
+                      K = ['Player', 'Opp', 'GameTime', '1_39',
+                           '40_49', '50plus', 'KTot', 'XP', 'FFPts'],
+                      DST = ['Player', 'Opp', 'WLScore', 'DefTD', 'Int',
+                             'FumR', 'Sack', 'Sfty', 'Blk', 'PtsAlld', 'FFPts'],
+                      ALL = ['Player', 'Team', 'Pos', 'Opp', 'WLScore', 'Cmp_Att',
+                             'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds', 'RsTD', 'Rec',
+                             'RcYds', 'RcTD', 'Tgt', '2PC', 'FumL', 'MiscTD',
+                             'DefTD', 'FumR', 'Sack', 'Sfty', 'Blk', 'PtsAlld',
+                             '1_39', '40_49', '50plus', 'KTot', 'XP', 'FFPts'])
+
+_proj_columns = dict(OFF=['Player', 'Opp', 'GameTime', 'Cmp_Att',
+                          'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds', 'RsTD', 'Rec',
+                          'RcYds', 'RcTD', 'FFPts'],
+                     K=['Player', 'Opp', 'GameTime', '1_39',
+                        '40_49', '50plus', 'KTot', 'XP', 'FFPts'],
+                     DST=['Player', 'Opp', 'GameTime', 'TT',
+                          'Sck', 'FumF', 'FumR', 'Int', 'IntTD', 'FumTD', 'FFPts'],
+                     ALL = ['Player', 'Team', 'Pos', 'Opp', 'GameTime',
+                            'Cmp_Att', 'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds',
+                            'RsTD', 'Rec', 'RcYds', 'RcTD', '1_39', '40_49',
+                            '50plus', 'KTot', 'XP', 'TT', 'Sck', 'FumF', 'FumR',
+                            'Int', 'IntTD', 'FumTD','FFPts'])
+
+_drop_cols = dict(OFF=[[1,4,9,13,18,22], [1,2,3,4,7,12,16,21,25]],
+                  DST=[[1,4,12], [1,2,3,4,7,15]],
+                  K=[[1,4,10], [1,2,3,4,7,13]])
+
 class FFLeague:
-    def __init__(self, name='NFL', league_id=None, path=os.getcwd()):
+    curr_year = datetime.datetime.now().year
+    def __init__(self, name='NFL', league_id=None, season=curr_year, path=os.getcwd()):
         self.name = name
+        self.season = season
         self.path = path
         if league_id is not None:
             self.league_id = str(league_id)
@@ -43,7 +76,7 @@ class FFLeague:
             self.owners = ['Owner%d' %i for i in range(len(d))]
         rosters = pd.DataFrame()
         teams = []
-        r = re.compile('(.*?) \((\d+)-(\d)\)')
+        r = re.compile('(.*?) \((\d+)-(\d+)\)')
 
         for n, roster in enumerate(d):
             m = r.match(roster.iloc[0,0])
@@ -51,11 +84,11 @@ class FFLeague:
             roster.columns = ['Slot', 'Player', 'Acq']
             roster.Player = roster.Player.astype('unicode')
             roster.dropna(0, inplace=True)
-            info = roster.Player.apply(split_espn_plr)
+            info = roster.Player.apply(split_espn_plr).apply(pd.Series)
             roster.drop('Player', axis=1, inplace=True)
-            roster.insert(0, 'Player', [i[0] for i in info])
-            roster.insert(1, 'Team', [i[1] for i in info])
-            roster.insert(1, 'Pos', [i[2] for i in info])
+            roster.insert(0, 'Player', info[0])
+            roster.insert(1, 'Team', info[1])
+            roster.insert(2, 'Pos', info[2])
             roster.insert(3, 'Owner', self.owners[n])
             rosters = pd.concat([rosters, roster])
             teams.append({'Owner': self.owners[n], 'Team': m.group(1), 'W': int(m.group(2)), 'L': int(m.group(3))})
@@ -73,38 +106,17 @@ class FFLeague:
         return rosters, teams
 
     def get_proj(self, week, write=True):
-        url_str = 'http://games.espn.com/ffl/tools/projections?&scoringPeriodId=%d&seasonId=2016&slotCategoryId=%d&startIndex=%d'
-
-        columns = ['Player', 'OwnCode', 'Action', 'Opp', 'GameTime', 'Cmp_Att',
-                   'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds', 'RsTD', 'Rec',
-                   'RcYds', 'RcTD', 'FFPts']
-        k_columns = ['Player', 'OwnCode', 'Action', 'Opp', 'GameTime', '1_39',
-                     '40_49', '50plus', 'KTot', 'XP', 'FFPts']
-        dst_columns = ['Player', 'OwnCode', 'Action', 'Opp', 'GameTime', 'TT',
-                       'Sck', 'FumF', 'FumR', 'Int', 'IntTD', 'FumTD', 'FFPts']
-
-        all_columns = ['Player', 'OwnCode', 'Action', 'Team', 'Pos', 'Opp', 'GameTime',
-                       'Cmp_Att', 'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds',
-                       'RsTD', 'Rec', 'RcYds', 'RcTD', '1_39', '40_49',
-                       '50plus', 'KTot', 'XP', 'TT', 'Sck', 'FumF', 'FumR',
-                       'Int', 'IntTD', 'FumTD','FFPts']
-
+        url_str = 'http://games.espn.com/ffl/tools/projections?&scoringPeriodId=%d&seasonId=%d&slotCategoryId=%d&startIndex=%d'
         if self.league_id:
             url_str += '&leagueId=%s' %self.league_id
-        else:
-            columns = [i for i in columns if i not in ['OwnCode', 'Action']]
-            k_columns = [i for i in k_columns if i not in ['OwnCode', 'Action']]
-            dst_columns = [i for i in dst_columns if i not in ['OwnCode', 'Action']]
-            all_columns = [i for i in all_columns if i not in ['OwnCode', 'Action']]
 
         proj = pd.DataFrame()
-
         for pos_id, pos in zip([0, 2, 4, 6, 16, 17],
                                ['QB', 'RB', 'WR', 'TE', 'DST', 'K']):
             print "Scraping projections for %ss" %pos
             idx = 0
             while True:
-                url = url_str %(week, pos_id, idx)
+                url = url_str %(week, self.season, pos_id, idx)
                 r = requests.get(url)
                 d = pd.read_html(r.content, attrs={'id': 'playertable_0'})
                 assert len(d) == 1
@@ -112,82 +124,83 @@ class FFLeague:
                 if d.shape[0] == 1:
                     break
                 d.drop(range(2), inplace=True)
-                if pos == 'K':
-                    d.columns = k_columns
-                elif pos=='DST':
-                    d.columns = dst_columns
+                if self.league_id:
+                    d.drop([1,2], axis=1, inplace=True)
+                if pos == 'DST' or pos == 'K':
+                    d.columns = _proj_columns[pos]
                 else:
-                    d.columns = columns
+                    d.columns = _proj_columns['OFF']
                 d.insert(2, 'Pos', pos)
                 proj = pd.concat([proj, d])
                 # ESPN shows 40 players per page
                 idx += 40
 
-        info = proj.Player.apply(split_espn_plr)
-        proj['Player'] = [i[0] for i in info]
-        proj.insert(2, 'Team', [i[1] for i in info])
-        if 'Action' in proj:
-            proj.drop('Action', axis=1, inplace=True)
         proj = proj.replace('--', np.nan)
+        proj = proj.replace('--/--', np.nan)
+        info = proj.Player.apply(split_espn_plr).apply(pd.Series)
+        proj['Player'] = info[0]
+        proj['Team'] = info[1]
+        proj = proj.reindex_axis(_proj_columns['ALL'], axis=1)
         proj = proj.apply(pd.to_numeric, errors='ignore')
-
         proj.reset_index(drop=True, inplace=True)
-        proj = proj.reindex_axis(all_columns, 1)
 
         if write:
-            proj.to_csv(os.path.join(self.proj_dir, 'Projections_2016Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
+            proj.to_csv(os.path.join(self.proj_dir, 'Projections_%dWk%d_%s.csv' \
+            %(self.season, week, time.strftime('%Y%m%d%H%M'))), index=False)
 
         return proj
 
+
+    def _drop_useless_cols(self, df, pos):
+        idx = self.league_id is not None
+        if pos == 'DST' or pos == 'K':
+            df.drop(_drop_cols[pos][idx], axis=1, inplace=True)
+            df.columns = _score_columns[pos]
+        else:
+            df.drop(_drop_cols['OFF'][idx], axis=1, inplace=True)
+            df.columns = _score_columns['OFF']
+        return df
+
+
     def get_scores(self, week, write=True):
-        url_str = 'http://games.espn.com/ffl/leaders?&scoringPeriodId=%d&seasonId=2016&slotCategoryId=%d&startIndex=%d'
-
-        columns = ['Player', 'OwnCode', 'Action', 'Opp', 'WLScore', 'Cmp_Att',
-                   'PsYds', 'PsTD', 'Int', 'RsAtt', 'RsYds', 'RsTD', 'Rec',
-                   'RcYds', 'RcTD', 'Tgt', '2PC', 'FumL', 'MiscTD', 'FFPts']
-
+        url_str = 'http://games.espn.com/ffl/leaders?&scoringPeriodId=%d&seasonId=%d&slotCategoryId=%d&startIndex=%d'
         if self.league_id:
             url_str += '&leagueId=%s' %self.league_id
-        else:
-            columns = [i for i in columns if i not in ['OwnCode', 'Action']]
 
         score = pd.DataFrame()
-
         for pos_id, pos in zip([0, 2, 4, 6, 16, 17],
                                ['QB', 'RB', 'WR', 'TE', 'DST', 'K']):
             print "Scraping scores for %ss" %pos
             idx = 0
             while True:
-                url = url_str %(week, pos_id, idx)
-                r = requests.get(url)
+                url = url_str %(week, self.season, pos_id, idx)
+                try:
+                    r = requests.get(url)
+                except:
+                    raise RuntimeError("There was an error scraping data from ESPN.")
                 d = pd.read_html(r.content, attrs={'id': 'playertable_0'})
                 assert len(d) == 1
                 d = d[0]
                 if d.shape[0] == 1:
                     break
                 d.drop(range(2), inplace=True)
-                # columns to drop depends on whether league columns are there
-                if self.league_id:
-                    d.drop([1,4,7,12,16,21,25], axis=1, inplace=True)
-                else:
-                    d.drop([1,4,9,13,18,22], axis=1, inplace=True)
-                d.columns = columns
+                d = self._drop_useless_cols(d, pos)
                 d.insert(2, 'Pos', pos)
                 score = pd.concat([score, d])
                 idx += 50 #scoring leaders show 50 per page, vs 40 for projections
 
-        info = score.Player.apply(split_espn_plr)
-        score['Player'] = [i[0] for i in info]
-        score.insert(2, 'Team', [i[1] for i in info])
-        if 'Action' in score:
-            score.drop('Action', axis=1, inplace=True)
         score = score.replace('--', np.nan)
+        score = score.replace('--/--', np.nan)
+        info = score.Player.apply(split_espn_plr).apply(pd.Series)
+        score['Player'] = info[0]
+        score['Team'] = info[1]
+        score = score.reindex_axis(_score_columns['ALL'], axis=1)
         score = score.apply(pd.to_numeric, errors='ignore')
-
         score.reset_index(drop=True, inplace=True)
 
         if write:
-            score.to_csv(os.path.join(self.score_dir, 'Scores_2016Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
+            score.to_csv(os.path.join(self.score_dir, 'Scores_%dWk%d_%s.csv' \
+            %(self.season, week, time.strftime('%Y%m%d%H%M'))), index=False)
 
         return score
 
@@ -298,3 +311,24 @@ class FFLeague:
 
         with open(os.path.join(self.vis_dir, 'teams_vs_average.json'), 'w') as f:
             json.dump(json_out, f)
+
+
+    def get_past_rosters(self, week, write=True):
+        url_str = 'http://games.espn.com/ffl/boxscorequick?leagueId=%s&teamId=%d&scoringPeriodId=%d&seasonId=%d&view=scoringperiod&version=quick'
+        rosters = []
+        for i, owner in enumerate(self.owners):
+            url = url_str %(self.league_id, i + 1, week, self.season)
+            d = pd.read_html(url, attrs={'id': 'playertable_0'})
+            info = d[0].drop(range(3)).dropna(subset=[1])
+            slots = info[0]
+            info = info[1].apply(split_espn_plr).apply(pd.Series)
+            info.columns = ['Player', 'Team', 'Pos']
+            info.insert(0, 'Slot', slots)
+            info['Owner'] = owner
+            rosters.append(info)
+        rosters = pd.concat(rosters)
+
+        if write:
+            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
+
+        return rosters
