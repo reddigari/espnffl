@@ -216,13 +216,13 @@ class FFLeague:
             proj_fnames = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))
             if not proj_fnames:
                 raise RuntimeError("No projection file found for week %d. " %week + \
-                                    "Please scrape it using `get_proj()`.")
+                                   "Please scrape it using `get_proj()`.")
             else:
                 proj_fname = proj_fnames[-1]
             score_fnames = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))
             if not score_fnames:
                 raise RuntimeError("No score file found for week %d. " %week + \
-                                    "Please scrape it using `get_scores()`.")
+                                   "Please scrape it using `get_scores()`.")
             else:
                 score_fname = score_fnames[-1]
             proj = pd.read_csv(proj_fname)
@@ -234,15 +234,19 @@ class FFLeague:
                 roster_fnames = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))
                 if not roster_fnames:
                     raise RuntimeError("No roster file found for week %d. " %week + \
-                                        "Please scrape it using `get_past_rosters()` " + \
-                                        "or `get_rosters()` if it is the current week.")
+                                       "Please scrape it using `get_past_rosters()` " + \
+                                       "or `get_rosters()` if it is the current week.")
                 else:
-                    roster_fname = roster_fnames[-1]
+                    final_roster = os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week)
+                    if final_roster in roster_fnames:
+                        roster_fname = final_roster
+                    else:
+                        roster_fname = roster_fnames[-1]
                 rosters = pd.read_csv(roster_fname)
                 how = 'outer' if all_players else 'inner'
                 pp = pd.merge(rosters, pp, on=['Player', 'Team', 'Pos'], how=how)
-                if not all_players:
-                    assert pp.shape[0] == rosters.shape[0]
+                # if not all_players:
+                #    assert pp.shape[0] == rosters.shape[0]
 
             pp.insert(1, 'Week', week)
             out = pd.concat([out, pp])
@@ -253,10 +257,12 @@ class FFLeague:
             times = {}
             for label, fname in zip(['projTime', 'scoreTime', 'rosterTime'], [proj_fname, score_fname, roster_fname]):
                 if fname:
-                    time_str = os.path.basename(fname).split('_')[-1].replace('.csv', '')
-                    time_str = time.strptime(time_str, '%Y%m%d%H%M')
-                    time_str = time.strftime('%A %m/%d at %I:%M %p', time_str)
-                    times[label] = time_str
+                    m = re.search('Wk\d+_(\d+)', fname)
+                    if m:
+                    # time_str = os.path.basename(fname).split('_')[-1].replace('.csv', '')
+                        time_str = time.strptime(m.group(1), '%Y%m%d%H%M')
+                        time_str = time.strftime('%A %m/%d at %I:%M %p', time_str)
+                        times[label] = time_str
 
             return pp, times
 
@@ -277,20 +283,27 @@ class FFLeague:
         pl.FFPts_proj.fillna(0, inplace=True)
         pl.fillna("null", inplace=True)
         gb = pl.groupby('Owner')
-        for owner in gb.groups:
+        for owner, d in gb:
             out, data_out = {}, []
             out['owner'] = owner
-            d = gb.get_group(owner).set_index('Slot')
+            d = d.set_index('Slot')
             for pos in order:
-                data_out.append({'Slot': pos,
-                                 'proj': d.ix[pos]['FFPts_proj'],
-                                 'pts': d.ix[pos]['FFPts_real'],
-                                 'player': d.ix[pos]['Player']})
+                if pos in d.index:
+                    data_out.append({'Slot': pos,
+                                     'proj': d.loc[pos, 'FFPts_proj'],
+                                     'pts': d.loc[pos, 'FFPts_real'],
+                                     'player': d.loc[pos, 'Player']})
+                else:
+                    data_out.append({'Slot': pos,
+                                     'proj': 0,
+                                     'pts': 0,
+                                     'player': "null"})
                 out['data'] = data_out
             json_out.append(out)
 
         with open(os.path.join(self.vis_dir, 'wk%d.json' %week), 'w') as f:
             json.dump(json_out, f)
+
 
     def output_team_vs_average_json(self, max_week):
         if not self.league_id:
@@ -316,11 +329,11 @@ class FFLeague:
 
         for owner, d in gb:
             d = d.set_index('Slot')
-            out = {'Owner': owner, 'Record': info.ix[owner, 'record'], 'data': []}
+            out = {'Owner': owner, 'Record': info.loc[owner, 'record'], 'data': []}
             for pos in order:
                 out['data'].append({'Slot': pos,
-                                    'FFPts': d.ix[pos]['FFPts_real'],
-                                    'Pct': d.ix[pos]['Pct']})
+                                    'FFPts': d.loc[pos, 'FFPts_real'],
+                                    'Pct': d.loc[pos, 'Pct']})
             json_out.append(out)
 
         with open(os.path.join(self.vis_dir, 'teams_vs_average.json'), 'w') as f:
