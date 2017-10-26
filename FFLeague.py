@@ -328,19 +328,24 @@ class FFLeague:
 
 
     def get_past_rosters(self, week, write=True):
+        if not self.league_id:
+            raise RuntimeError("Cannot get rosters without ESPN league ID.")
         url_str = 'http://games.espn.com/ffl/boxscorequick?leagueId=%s&teamId=%d&scoringPeriodId=%d&seasonId=%d&view=scoringperiod&version=quick'
         rosters = []
         for i, owner in enumerate(self.owners):
             url = url_str %(self.league_id, i + 1, week, self.season)
-            d = pd.read_html(url, attrs={'id': 'playertable_0'})
-            info = d[0].drop(range(3)).dropna(subset=[1])
-            slots = info[0]
-            info = info[1].apply(split_espn_plr).apply(pd.Series)
-            info.columns = ['Player', 'Team', 'Pos']
-            info.insert(0, 'Slot', slots)
-            info['Owner'] = owner
-            rosters.append(info)
+            r = requests.get(url)
+            for table_id in ['playertable_0', 'playertable_1']:
+                d = pd.read_html(r.content, attrs={'id': table_id})
+                info = d[0].drop(range(3)).dropna(subset=[1])
+                slots = info[0]
+                info = info[1].apply(split_espn_plr).apply(pd.Series)
+                info.columns = ['Player', 'Team', 'Pos']
+                info.insert(0, 'Slot', slots)
+                info['Owner'] = owner
+                rosters.append(info)
         rosters = pd.concat(rosters)
+        rosters.Slot = rosters.Slot.str.upper()
 
         if write:
             rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
