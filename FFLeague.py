@@ -213,20 +213,33 @@ class FFLeague:
 
         out = pd.DataFrame()
         for week in weeks:
-            proj_fname = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))[-1]
-            score_fname = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))[-1]
+            proj_fnames = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))
+            if not proj_fnames:
+                raise RuntimeError("No projection file found for week %d. " %week + \
+                                    "Please scrape it using `get_proj()`.")
+            else:
+                proj_fname = proj_fnames[-1]
+            score_fnames = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))
+            if not score_fnames:
+                raise RuntimeError("No score file found for week %d. " %week + \
+                                    "Please scrape it using `get_scores()`.")
+            else:
+                score_fname = score_fnames[-1]
             proj = pd.read_csv(proj_fname)
             score = pd.read_csv(score_fname)
             pp = pd.merge(proj, score, on=['Player', 'Team', 'Pos'], how='outer', suffixes=['_proj', '_real'])
             roster_fname = None
 
             if self.league_id:
-                roster_fname = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))[-1]
-                rosters = pd.read_csv(roster_fname)
-                if all_players:
-                    how = 'outer'
+                roster_fnames = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))
+                if not roster_fnames:
+                    raise RuntimeError("No roster file found for week %d. " %week + \
+                                        "Please scrape it using `get_past_rosters()` " + \
+                                        "or `get_rosters()` if it is the current week.")
                 else:
-                    how = 'inner'
+                    roster_fname = roster_fnames[-1]
+                rosters = pd.read_csv(roster_fname)
+                how = 'outer' if all_players else 'inner'
                 pp = pd.merge(rosters, pp, on=['Player', 'Team', 'Pos'], how=how)
                 if not all_players:
                     assert pp.shape[0] == rosters.shape[0]
@@ -249,6 +262,7 @@ class FFLeague:
 
         else:
             return pp
+
 
     def output_week_vis_json(self, week):
         if not self.league_id:

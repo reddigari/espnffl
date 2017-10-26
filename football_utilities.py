@@ -37,15 +37,16 @@ short_dict = {'DEN': ['Denver', 'Broncos'],
 team_dict = {}
 
 for team, shorts in short_dict.iteritems():
+    team_dict[team] = team
     for name in shorts:
         team_dict[name.upper()] = team
 
 def get_team_abbr(x):
     x = x.upper()
-    if x in team_dict.values():
-        return x
-    else:
-        return team_dict[x]
+    # if x in team_dict.values():
+    #    return x
+    # else:
+    return team_dict[x]
 
 def split_espn_plr(x):
     if ',' in x:
