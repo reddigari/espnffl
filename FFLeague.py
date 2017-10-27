@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-import os, re, time, glob, requests, json, pickle, datetime
+import os, re, time, requests, json, pickle, datetime
+from glob import glob
 from bs4 import BeautifulSoup
 from .football_utilities import *
 
@@ -79,60 +80,86 @@ class FFLeague:
             self.owners = ['Owner%d' %i for i in range(1, len(teams) + 1)]
             with open(os.path.join(self.path, 'owners.txt'), 'w') as f:
                 f.write('\n'.join(self.owners))
-        regex = re.compile('(.*?) \((\d+)-(\d+)\)')
         info = []
         for i, team in enumerate(teams):
-            name, w, l = re.match('(.*?) \((\d+)-(\d+)\)', team.text).groups()
+            name, w, l, t = re.match('(.*?) \((\d+)-(\d+)-*(\d?)\)', team.text).groups()
             w, l = int(w), int(l)
-            info.append({'Owner': self.owners[i], 'Team': name, 'W': w, 'L': l})
+            t = int(t) if t != '' else 0
+            info.append({'Owner': self.owners[i], 'Team': name,
+                         'W': w, 'L': l, 'T': t})
         teams = pd.DataFrame(info)
-        teams = teams.reindex_axis(['Owner', 'Team', 'W', 'L'], axis=1)
+        teams = teams.reindex_axis(['Owner', 'Team', 'W', 'L', 'T'], axis=1)
 
         if write:
             teams.to_csv(os.path.join(self.team_dir, 'TeamInfo_%s.csv' % time.strftime('%Y%m%d%H%M')), index=False)
 
         return teams
 
-    def get_rosters(self, week, write=True):
+
+    def get_rosters_and_matchup(self, week, write=True):
+        ## Starting with team ID 1, scrape box score, and record
+        ## rosters for both teams involved. Proceed with next ID
+        ## not yet encountered.
         if not self.league_id:
             raise RuntimeError("Cannot get rosters without ESPN league ID.")
-        url = 'http://games.espn.com/ffl/leaguerosters?leagueId=%s' %self.league_id
-        d = pd.read_html(url, attrs={'class': 'playerTableTable tableBody'})
-        if self.owners:
-            if len(self.owners) != len(d):
-                raise RuntimeError("Number of owners provided doesn't match number of rosters scraped.")
-        else:
-            self.owners = ['Owner%d' %i for i in range(len(d))]
-        rosters = pd.DataFrame()
-        teams = []
-        r = re.compile('(.*?) \((\d+)-(\d+)\)')
+        url_str = 'http://games.espn.com/ffl/boxscorequick?leagueId=%s&teamId=%d&scoringPeriodId=%d&seasonId=%d&view=scoringperiod&version=quick'
+        rosters = []
+        team_ids = []
+        matchups = []
+        team_id = 1
+        while len(team_ids) < len(self.owners):
 
-        for n, roster in enumerate(d):
-            m = r.match(roster.iloc[0,0])
-            roster.drop(range(2), inplace=True)
-            roster.columns = ['Slot', 'Player', 'Acq']
-            roster.Player = roster.Player.astype('unicode')
-            roster.dropna(0, inplace=True)
-            info = roster.Player.apply(split_espn_plr).apply(pd.Series)
-            roster.drop('Player', axis=1, inplace=True)
-            roster.insert(0, 'Player', info[0])
-            roster.insert(1, 'Team', info[1])
-            roster.insert(2, 'Pos', info[2])
-            roster.insert(3, 'Owner', self.owners[n])
-            rosters = pd.concat([rosters, roster])
-            teams.append({'Owner': self.owners[n], 'Team': m.group(1), 'W': int(m.group(2)), 'L': int(m.group(3))})
+            ## increment team_id until we find one not yet scraped
+            while (team_id in team_ids):
+                team_id += 1
 
-        rosters.reset_index(drop=True, inplace=True)
-        teams = pd.DataFrame.from_records(teams)
-        teams = teams.reindex_axis(['Owner', 'Team', 'W', 'L'], axis=1)
+            url = url_str %(self.league_id, team_id, week, self.season)
+            r = requests.get(url)
+            roster_dfs = pd.read_html(r.content, attrs={'class': 'playerTableTable'})
+            soup = BeautifulSoup(r.content, 'lxml')
+            ## I can only find team IDs on this page in the hrefs for the team logos
+            teams = soup.find('div', attrs={'id': 'teamInfos'}).find_all('a',
+                              attrs={'href': lambda x: 'teamId' in x})
+            t_ids = []
+            for t in teams:
+                t_id = int(re.search('teamId=(\d+)', t.get('href')).group(1))
+                t_ids.append(t_id)      ## ids of teams in matchup
+                team_ids.append(t_id)   ## ids of teams scraped so far
+            ## get totals to determine W/L/T
+            totals = soup.find_all(attrs={'class': 'totalScore'})
+            totals = [float(i.text) for i in totals]
+
+            for i, t_id in enumerate(t_ids):
+                ## process roster data frames (starters and bench)
+                for d in roster_dfs[(2 * i):(2 * i + 2)]:
+                    info = d.drop(range(3)).dropna(subset=[1])
+                    slots = info[0]
+                    info = info[1].apply(split_espn_plr).apply(pd.Series)
+                    info.columns = ['Player', 'Team', 'Pos']
+                    info.insert(0, 'Slot', slots)
+                    info['Owner'] = self.owners[t_id - 1]
+                    rosters.append(info)
+                ## process matchup info
+                matchup = {'Owner': self.owners[t_id-1],
+                           'Opponent': self.owners[t_ids[i-1] - 1],
+                           'Score': totals[i],
+                           'OppScore': totals[i-1],
+                           'Outcome': 'T' if totals[0]==totals[1] else \
+                                      'W' if totals[i] > totals[i-1] else 'L'}
+                matchups.append(matchup)
+
+        rosters = pd.concat(rosters)
+        rosters.Slot = rosters.Slot.str.upper()
+        matchups = pd.DataFrame(matchups)
+        matchups = matchups.reindex_axis(['Owner', 'Opponent', 'Score',
+                                          'OppScore', 'Outcome'], axis=1)
 
         if write:
-            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
-            teams.to_csv(os.path.join(self.team_dir, 'TeamInfo_Wk%d_%s.csv' %(week, time.strftime('%Y%m%d%H%M'))), index=False)
+            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
+            matchups.to_csv(os.path.join(self.team_dir, 'Matchups_Wk%d.csv' %week), index=False)
 
-        self.rosters = rosters
-        self.team_info = teams
-        return rosters, teams
+        return rosters, matchups
+
 
     def get_proj(self, week, write=True):
         url_str = 'http://games.espn.com/ffl/tools/projections?&scoringPeriodId=%d&seasonId=%d&slotCategoryId=%d&startIndex=%d'
@@ -242,13 +269,13 @@ class FFLeague:
 
         out = pd.DataFrame()
         for week in weeks:
-            proj_fnames = sorted(glob.glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))
+            proj_fnames = sorted(glob(os.path.join(self.proj_dir, 'Projections*Wk%d*.csv' %week)))
             if not proj_fnames:
                 raise RuntimeError("No projection file found for week %d. " %week + \
                                    "Please scrape it using `get_proj()`.")
             else:
                 proj_fname = proj_fnames[-1]
-            score_fnames = sorted(glob.glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))
+            score_fnames = sorted(glob(os.path.join(self.score_dir, 'Scores*Wk%d*.csv' %week)))
             if not score_fnames:
                 raise RuntimeError("No score file found for week %d. " %week + \
                                    "Please scrape it using `get_scores()`.")
@@ -260,7 +287,7 @@ class FFLeague:
             roster_fname = None
 
             if self.league_id:
-                roster_fnames = sorted(glob.glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))
+                roster_fnames = sorted(glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))
                 if not roster_fnames:
                     raise RuntimeError("No roster file found for week %d. " %week + \
                                        "Please scrape it using `get_past_rosters()` " + \
@@ -299,7 +326,28 @@ class FFLeague:
             return pp
 
 
-    def output_week_vis_json(self, week):
+    def determine_records(self, week):
+        matchups = []
+        for w in range(1, week+1):
+            matchup_fnames = glob(os.path.join(self.team_dir, 'Matchups_Wk%d.csv' %w))
+            if not matchup_fnames:
+                raise RuntimeError("No matchup file found for week %d. " %w +\
+                                   "Please scrape the matchup using " +\
+                                   "`get_rosters_and_matchup()`.")
+            m = pd.read_csv(matchup_fnames[0])
+            matchups.append(m)
+        matchups = pd.concat(matchups)
+        records = pd.DataFrame(index=matchups.Owner.unique())
+        gb = matchups.groupby('Owner')['Outcome']
+        for outcome in ['W', 'L', 'T']:
+            records[outcome] = gb.apply(lambda x: (x==outcome).sum())
+        records['record'] = records.apply(lambda r: '%d-%d-%d' \
+                                          %(r['W'], r['L'], r['T']), axis=1)
+
+        return records
+
+
+    def output_week_vis_json(self, week, write=True):
         if not self.league_id:
             raise RuntimeError("Cannot output team data without ESPN league ID.")
         pp, times = self.merge_proj_scores(week, all_players=False, return_times=True)
@@ -330,24 +378,22 @@ class FFLeague:
                 out['data'] = data_out
             json_out.append(out)
 
-        with open(os.path.join(self.vis_dir, 'wk%d.json' %week), 'w') as f:
-            json.dump(json_out, f)
+        if write:
+            with open(os.path.join(self.vis_dir, 'wk%d.json' %week), 'w') as f:
+                json.dump(json_out, f)
+
+        return json_out
 
 
-    def output_team_vs_average_json(self, max_week):
+
+
+    def output_team_vs_average_json(self, max_week, write=True):
         if not self.league_id:
             raise RuntimeError("Cannot output team data without ESPN league ID.")
 
         json_out = []
-        data = pd.DataFrame()
-        for week in range(1, max_week+1):
-            pp = self.merge_proj_scores(week, all_players=False)
-            data = pd.concat([data, pp])
-
-        # get team info (with WL) from the first file scraped after the week switches over
-        info_fname = sorted(glob.glob(os.path.join(self.path, 'Teams', 'TeamInfo*Wk%d*.csv' %(max_week+1))))[0]
-        info = pd.read_csv(info_fname).set_index('Owner')
-        info['record'] = info.apply(lambda r: '%d-%d' %(r['W'], r['L']), 1)
+        data = self.merge_proj_scores(max_week, all_players=False, prev_weeks=True)
+        info = self.determine_records(max_week)
 
         team_aves = data.groupby(['Owner', 'Slot']).sum()['FFPts_real']/float(max_week)
         team_aves = team_aves.reset_index()
@@ -365,99 +411,10 @@ class FFLeague:
                                     'Pct': d.loc[pos, 'Pct']})
             json_out.append(out)
 
-        with open(os.path.join(self.vis_dir, 'teams_vs_average.json'), 'w') as f:
-            json.dump(json_out, f)
-
-
-#    def get_past_rosters(self, week, write=True):
-#        if not self.league_id:
-#            raise RuntimeError("Cannot get rosters without ESPN league ID.")
-#        url_str = 'http://games.espn.com/ffl/boxscorequick?leagueId=%s&teamId=%d&scoringPeriodId=%d&seasonId=%d&view=scoringperiod&version=quick'
-#        rosters = []
-#        for i, owner in enumerate(self.owners):
-#            url = url_str %(self.league_id, i + 1, week, self.season)
-#            r = requests.get(url)
-#            soup = BeautifulSoup(r.content, 'lxml')
-#            for table_id in ['playertable_0', 'playertable_1']:
-#                d = pd.read_html(r.content, attrs={'id': table_id})
-#                info = d[0].drop(range(3)).dropna(subset=[1])
-#                slots = info[0]
-#                info = info[1].apply(split_espn_plr).apply(pd.Series)
-#                info.columns = ['Player', 'Team', 'Pos']
-#                info.insert(0, 'Slot', slots)
-#                info['Owner'] = owner
-#                rosters.append(info)
-#                # determine W/L/T based on final scores
-#                totals = soup.find_all(attrs={'class': 'totalScore'})
-#        rosters = pd.concat(rosters)
-#        rosters.Slot = rosters.Slot.str.upper()
-#
-#        if write:
-#            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
-#
-#        return rosters
-
-
-    def get_rosters_and_matchup(self, week, write=True):
-        ## Starting with team ID 1, scrape box score, and record
-        ## rosters for both teams involved. Proceed with next ID
-        ## not yet encountered.
-        if not self.league_id:
-            raise RuntimeError("Cannot get rosters without ESPN league ID.")
-        url_str = 'http://games.espn.com/ffl/boxscorequick?leagueId=%s&teamId=%d&scoringPeriodId=%d&seasonId=%d&view=scoringperiod&version=quick'
-        rosters = []
-        team_ids = []
-        matchups = []
-        team_id = 1
-        while len(team_ids) < len(self.owners):
-
-            ## increment team_id until we find one not yet scraped
-            while (team_id in team_ids):
-                team_id += 1
-
-            url = url_str %(self.league_id, team_id, week, self.season)
-            r = requests.get(url)
-            roster_dfs = pd.read_html(r.content, attrs={'class': 'playerTableTable'})
-            soup = BeautifulSoup(r.content, 'lxml')
-            ## I can only find team IDs on this page in the hrefs for the team logos
-            teams = soup.find('div', attrs={'id': 'teamInfos'}).find_all('a',
-                              attrs={'href': lambda x: 'teamId' in x})
-            t_ids = []
-            for t in teams:
-                t_id = int(re.search('teamId=(\d+)', t.get('href')).group(1))
-                t_ids.append(t_id)      ## ids of teams in matchup
-                team_ids.append(t_id)   ## ids of teams scraped so far
-            ## get totals to determine W/L/T
-            totals = soup.find_all(attrs={'class': 'totalScore'})
-            totals = [float(i.text) for i in totals]
-
-            for i, t_id in enumerate(t_ids):
-                ## process roster data frames (starters and bench)
-                for d in roster_dfs[(2 * i):(2 * i + 2)]:
-                    info = d.drop(range(3)).dropna(subset=[1])
-                    slots = info[0]
-                    info = info[1].apply(split_espn_plr).apply(pd.Series)
-                    info.columns = ['Player', 'Team', 'Pos']
-                    info.insert(0, 'Slot', slots)
-                    info['Owner'] = self.owners[t_id - 1]
-                    rosters.append(info)
-                ## process matchup info
-                matchup = {'Owner': self.owners[t_id-1],
-                           'Opponent': self.owners[t_ids[i-1] - 1],
-                           'Score': totals[i],
-                           'OppScore': totals[i-1],
-                           'Outcome': 'T' if totals[0]==totals[1] else \
-                                      'W' if totals[i] > totals[i-1] else 'L'}
-                matchups.append(matchup)
-
-        rosters = pd.concat(rosters)
-        rosters.Slot = rosters.Slot.str.upper()
-        matchups = pd.DataFrame(matchups)
-        matchups = matchups.reindex_axis(['Owner', 'Opponent', 'Score',
-                                          'OppScore', 'Outcome'], axis=1)
-
         if write:
-            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
-            matchups.to_csv(os.path.join(self.team_dir, 'Matchups_Wk%d.csv' %week), index=False)
+            with open(os.path.join(self.vis_dir, 'teams_vs_average.json'), 'w') as f:
+                json.dump(json_out, f)
 
-        return rosters, matchups
+        return json_out
+
+
