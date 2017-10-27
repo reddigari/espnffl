@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import os, re, time, glob, requests, json, pickle, datetime
-
+from bs4 import BeautifulSoup
 from .football_utilities import *
 
 
@@ -63,6 +63,33 @@ class FFLeague:
 
     def __repr__(self):
         return '<%s - ESPN League: %s>' %(self.name, self.league_id)
+
+
+    def get_team_info(self, write=True):
+        if not self.league_id:
+            raise RuntimeError("Cannot get team info without ESPN league ID.")
+        url = 'http://games.espn.com/ffl/leaguerosters?leagueId=%s' %self.league_id
+        r = requests.get(url)
+        soup = BeautifulSoup(r.content, 'lxml')
+        teams = soup.find_all(attrs={'class': 'playertableSectionHeader'}) 
+        if self.owners:
+            if len(self.owners) != len(teams):
+                raise RuntimeError("Number of owners provided doesn't match number of teams scraped.")
+        else:
+            self.owners = ['Owner%d' %i for i in range(1, len(teams) + 1)]
+        regex = re.compile('(.*?) \((\d+)-(\d+)\)')
+        info = []
+        for i, team in enumerate(teams):
+            name, w, l = re.match('(.*?) \((\d+)-(\d+)\)', team.text).groups()
+            w, l = int(w), int(l)
+            info.append({'Owner': self.owners[i], 'Team': name, 'W': w, 'L': l})
+        teams = pd.DataFrame(info)
+        teams = teams.reindex_axis(['Owner', 'Team', 'W', 'L'], axis=1)
+        
+        if write:
+            teams.to_csv(os.path.join(self.team_dir, 'TeamInfo_%s.csv' % time.strftime('%Y%m%d%H%M')), index=False)
+
+        return teams
 
     def get_rosters(self, week, write=True):
         if not self.league_id:
@@ -340,27 +367,73 @@ class FFLeague:
             json.dump(json_out, f)
 
 
-    def get_past_rosters(self, week, write=True):
+#    def get_past_rosters(self, week, write=True):
+#        if not self.league_id:
+#            raise RuntimeError("Cannot get rosters without ESPN league ID.")
+#        url_str = 'http://games.espn.com/ffl/boxscorequick?leagueId=%s&teamId=%d&scoringPeriodId=%d&seasonId=%d&view=scoringperiod&version=quick'
+#        rosters = []
+#        for i, owner in enumerate(self.owners):
+#            url = url_str %(self.league_id, i + 1, week, self.season)
+#            r = requests.get(url)
+#            soup = BeautifulSoup(r.content, 'lxml')
+#            for table_id in ['playertable_0', 'playertable_1']:
+#                d = pd.read_html(r.content, attrs={'id': table_id})
+#                info = d[0].drop(range(3)).dropna(subset=[1])
+#                slots = info[0]
+#                info = info[1].apply(split_espn_plr).apply(pd.Series)
+#                info.columns = ['Player', 'Team', 'Pos']
+#                info.insert(0, 'Slot', slots)
+#                info['Owner'] = owner
+#                rosters.append(info)
+#                # determine W/L/T based on final scores
+#                totals = soup.find_all(attrs={'class': 'totalScore'})
+#                
+#        rosters = pd.concat(rosters)
+#        rosters.Slot = rosters.Slot.str.upper()
+#
+#        if write:
+#            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
+#
+#        return rosters
+    
+    
+    def get_rosters_and_matchup(self, week, write=True):
+        ## Starting with team ID 1, scrape box score, and record
+        ## rosters for both teams involved. Proceed with next ID
+        ## not yet encountered.
         if not self.league_id:
             raise RuntimeError("Cannot get rosters without ESPN league ID.")
         url_str = 'http://games.espn.com/ffl/boxscorequick?leagueId=%s&teamId=%d&scoringPeriodId=%d&seasonId=%d&view=scoringperiod&version=quick'
         rosters = []
-        for i, owner in enumerate(self.owners):
-            url = url_str %(self.league_id, i + 1, week, self.season)
+        team_ids = [] 
+        team_id = 1
+        while len(team_ids) < len(self.owners):
+            while (team_id in team_ids): 
+                team_id += 1
+
+            url = url_str %(self.league_id, team_id, week, self.season)
             r = requests.get(url)
-            for table_id in ['playertable_0', 'playertable_1']:
-                d = pd.read_html(r.content, attrs={'id': table_id})
-                info = d[0].drop(range(3)).dropna(subset=[1])
-                slots = info[0]
-                info = info[1].apply(split_espn_plr).apply(pd.Series)
-                info.columns = ['Player', 'Team', 'Pos']
-                info.insert(0, 'Slot', slots)
-                info['Owner'] = owner
-                rosters.append(info)
+            roster_dfs = pd.read_html(r.content, attrs={'class': 'playerTableTable'})
+            soup = BeautifulSoup(r.content, 'lxml')
+            ## I can only find team IDs on this page in the hrefs for the team logos
+            teams = soup.find('div', attrs={'id': 'teamInfos'}).find_all('a',
+                              attrs={'href': lambda x: 'teamId' in x})
+            for i, team in enumerate(teams):
+                t_id = re.search('teamId=(\d+)', team.get('href')).group(1)
+                team_ids.append(int(t_id))
+                for d in roster_dfs[(2 * i):(2 * i + 2)]:
+                    info = d.drop(range(3)).dropna(subset=[1])
+                    slots = info[0]
+                    info = info[1].apply(split_espn_plr).apply(pd.Series)
+                    info.columns = ['Player', 'Team', 'Pos']
+                    info.insert(0, 'Slot', slots)
+                    info['Owner'] = self.owners[int(t_id) - 1]
+                    rosters.append(info)
+
         rosters = pd.concat(rosters)
         rosters.Slot = rosters.Slot.str.upper()
 
         if write:
-            rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
+           rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
 
         return rosters
