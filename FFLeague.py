@@ -37,10 +37,10 @@ _drop_cols = dict(OFF=[[1,4,9,13,18,22], [1,2,3,4,7,12,16,21,25]],
                   K=[[1,4,10], [1,2,3,4,7,13]])
 
 class FFLeague:
-    curr_year = datetime.datetime.now().year
-    def __init__(self, name='NFL', league_id=None, season=curr_year, path=os.getcwd()):
+    # curr_year = datetime.datetime.now().year
+    def __init__(self, name='NFL', league_id=None, season=None, path=os.getcwd()):
         self.name = name
-        self.season = season
+        # self.season = season
         self.path = path
         if league_id is not None:
             self.league_id = str(league_id)
@@ -52,6 +52,14 @@ class FFLeague:
                 self.owners = [i.strip() for i in f.readlines()]
         else:
             self.owners = None
+
+        if season is None:
+            now = datetime.datetime.now()
+            self.season = now.year if now.month > 6 else now.year - 1
+            print "Using %d as the season. " %self.season +\
+                  "If not correct, please specify the season manually."
+        else:
+            self.season = season
 
         self.team_dir = os.path.join(self.path, 'Teams')
         self.proj_dir = os.path.join(self.path, 'Projections', 'ESPN')
@@ -383,8 +391,6 @@ class FFLeague:
                 json.dump(json_out, f)
 
         return json_out
-
-
 
 
     def output_team_vs_average_json(self, max_week, write=True):
