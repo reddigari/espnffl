@@ -46,12 +46,6 @@ class FFLeague:
             self.league_id = str(league_id)
         else:
             self.league_id = None
-        owner_path = os.path.join(self.path, 'owners.txt')
-        if os.path.exists(owner_path):
-            with open(os.path.join(path, 'owners.txt')) as f:
-                self.owners = [i.strip() for i in f.readlines()]
-        else:
-            self.owners = None
 
         if season is None:
             now = datetime.datetime.now()
@@ -70,6 +64,25 @@ class FFLeague:
             if not os.path.exists(dirname):
                 os.makedirs(dirname)
 
+        self.owners = None
+        self.team_names = None
+        if self.league_id:
+            ## if owner file exists, get owners; else scrape team info,
+            ## which will set placeholder owners and get team names
+            owner_path = os.path.join(self.path, 'owners.txt')
+            if os.path.exists(owner_path):
+                with open(os.path.join(path, 'owners.txt')) as f:
+                    self.owners = [i.strip() for i in f.readlines()]
+            else:
+                info = self.get_team_info()
+
+            if self.team_names is None:
+                ## look for team names in TeamInfo files
+                info_fnames = glob(os.path.join(self.team_dir, 'TeamInfo*'))
+                if info_fnames:
+                    info = pd.read_csv(info_fnames[-1])
+                    self.teams = info.Team.values
+
     def __repr__(self):
         return '<%s - ESPN League: %s>' %(self.name, self.league_id)
 
@@ -85,7 +98,7 @@ class FFLeague:
             if len(self.owners) != len(teams):
                 raise RuntimeError("Number of owners provided doesn't match number of teams scraped.")
         else:
-            self.owners = ['Owner%d' %i for i in range(1, len(teams) + 1)]
+            self.owners = ['Owner%02d' %i for i in range(1, len(teams) + 1)]
             with open(os.path.join(self.path, 'owners.txt'), 'w') as f:
                 f.write('\n'.join(self.owners))
         info = []
@@ -94,9 +107,11 @@ class FFLeague:
             w, l = int(w), int(l)
             t = int(t) if t != '' else 0
             info.append({'Owner': self.owners[i], 'Team': name,
-                         'W': w, 'L': l, 'T': t})
+                         'TeamID': i + 1, 'W': w, 'L': l, 'T': t})
         teams = pd.DataFrame(info)
-        teams = teams.reindex_axis(['Owner', 'Team', 'W', 'L', 'T'], axis=1)
+        teams = teams.reindex_axis(['TeamID', 'Owner', 'Team',
+                                    'W', 'L', 'T'], axis=1)
+        self.team_names = teams.Team.values
 
         if write:
             teams.to_csv(os.path.join(self.team_dir, 'TeamInfo_%s.csv' % time.strftime('%Y%m%d%H%M')), index=False)
@@ -146,10 +161,13 @@ class FFLeague:
                     info.columns = ['Player', 'Team', 'Pos']
                     info.insert(0, 'Slot', slots)
                     info['Owner'] = self.owners[t_id - 1]
+                    info['TeamID'] = t_id
                     rosters.append(info)
                 ## process matchup info
                 matchup = {'Owner': self.owners[t_id-1],
+                           'OwnerID': t_id,
                            'Opponent': self.owners[t_ids[i-1] - 1],
+                           'OppID': t_ids[i-1],
                            'Score': totals[i],
                            'OppScore': totals[i-1],
                            'Outcome': 'T' if totals[0]==totals[1] else \
@@ -159,8 +177,9 @@ class FFLeague:
         rosters = pd.concat(rosters)
         rosters.Slot = rosters.Slot.str.upper()
         matchups = pd.DataFrame(matchups)
-        matchups = matchups.reindex_axis(['Owner', 'Opponent', 'Score',
-                                          'OppScore', 'Outcome'], axis=1)
+        matchups = matchups.reindex_axis(['Owner', 'OwnerID', 'Score',
+                                          'Opponent', 'OppID', 'OppScore',
+                                          'Outcome'], axis=1)
 
         if write:
             rosters.to_csv(os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week), index=False)
@@ -298,8 +317,8 @@ class FFLeague:
                 roster_fnames = sorted(glob(os.path.join(self.team_dir, 'Rosters_Wk%d*.csv' %week)))
                 if not roster_fnames:
                     raise RuntimeError("No roster file found for week %d. " %week + \
-                                       "Please scrape it using `get_past_rosters()` " + \
-                                       "or `get_rosters()` if it is the current week.")
+                                       "Please scrape it using " +\
+                                       "`get_rosters_and_matchups()`.")
                 else:
                     final_roster = os.path.join(self.team_dir, 'Rosters_Wk%d.csv' %week)
                     if final_roster in roster_fnames:
@@ -319,11 +338,11 @@ class FFLeague:
 
         if return_times:
             times = {}
-            for label, fname in zip(['projTime', 'scoreTime', 'rosterTime'], [proj_fname, score_fname, roster_fname]):
+            for label, fname in zip(['projTime', 'scoreTime', 'rosterTime'],
+                                    [proj_fname, score_fname, roster_fname]):
                 if fname:
                     m = re.search('Wk\d+_(\d+)', fname)
                     if m:
-                    # time_str = os.path.basename(fname).split('_')[-1].replace('.csv', '')
                         time_str = time.strptime(m.group(1), '%Y%m%d%H%M')
                         time_str = time.strftime('%A %m/%d at %I:%M %p', time_str)
                         times[label] = time_str
@@ -345,8 +364,10 @@ class FFLeague:
             m = pd.read_csv(matchup_fnames[0])
             matchups.append(m)
         matchups = pd.concat(matchups)
-        records = pd.DataFrame(index=matchups.Owner.unique())
-        gb = matchups.groupby('Owner')['Outcome']
+        records = pd.DataFrame(index=matchups.OwnerID.unique())
+        records.index.name = 'TeamID'
+        records['Owner'] = [self.owners[i-1] for i in records.index]
+        gb = matchups.groupby('OwnerID')['Outcome']
         for outcome in ['W', 'L', 'T']:
             records[outcome] = gb.apply(lambda x: (x==outcome).sum())
         records['record'] = records.apply(lambda r: '%d-%d-%d' \
@@ -355,22 +376,22 @@ class FFLeague:
         return records
 
 
-    def output_week_vis_json(self, week, write=True):
+    def output_week_vis_json(self, week, team_names=False, write=True):
         if not self.league_id:
             raise RuntimeError("Cannot output team data without ESPN league ID.")
         pp, times = self.merge_proj_scores(week, all_players=False, return_times=True)
         json_out = [times]
         order = ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST', 'FLEX']
-        pl = pp.groupby(['Owner', 'Slot']).agg({'FFPts_proj': np.sum,
+        pl = pp.groupby(['TeamID', 'Slot']).agg({'FFPts_proj': np.sum,
                                                 'FFPts_real': np.sum,
                                                 'Player': lambda x: ' & '.join(x)})
         pl.reset_index(inplace=True)
         pl.FFPts_proj.fillna(0, inplace=True)
         pl.fillna("null", inplace=True)
-        gb = pl.groupby('Owner')
-        for owner, d in gb:
+        gb = pl.groupby('TeamID')
+        for t_id, d in gb:
             out, data_out = {}, []
-            out['owner'] = owner
+            out['owner'] = self.team_names[t_id-1] if team_names else self.owners[t_id-1]
             d = d.set_index('Slot')
             for pos in order:
                 if pos in d.index:
@@ -393,24 +414,32 @@ class FFLeague:
         return json_out
 
 
-    def output_team_vs_average_json(self, max_week, write=True):
+    def output_team_vs_average_json(self, max_week, team_names=False, write=True):
         if not self.league_id:
             raise RuntimeError("Cannot output team data without ESPN league ID.")
 
         json_out = []
         data = self.merge_proj_scores(max_week, all_players=False, prev_weeks=True)
-        info = self.determine_records(max_week)
+        records = self.determine_records(max_week)
 
-        team_aves = data.groupby(['Owner', 'Slot']).sum()['FFPts_real']/float(max_week)
+        team_aves = data.groupby(['Owner', 'TeamID', 'Slot']).sum()['FFPts_real']/float(max_week)
         team_aves = team_aves.reset_index()
         lg_aves = data.groupby(['Slot']).sum()['FFPts_real']/(float(max_week)*len(self.owners))
         team_aves['Pct'] = team_aves.apply(lambda r: (r['FFPts_real']-lg_aves[r['Slot']])/lg_aves[r['Slot']], 1)
         order = ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST', 'FLEX']
-        gb = team_aves.groupby('Owner')
 
-        for owner, d in gb:
+        if team_names:
+            info_fname = glob(os.path.join(self.team_dir, 'TeamInfo*'))[-1]
+            info = pd.read_csv(info_fname).set_index('TeamID')
+            team_aves['TeamName'] = team_aves.TeamID.astype('int').apply(
+                    lambda t: info.loc[t, 'Team'])
+
+        gb = team_aves.groupby('TeamID')
+        for t_id, d in gb:
+            t_id = int(t_id)
             d = d.set_index('Slot')
-            out = {'Owner': owner, 'Record': info.loc[owner, 'record'], 'data': []}
+            out = {'TeamID': t_id, 'Record': records.loc[t_id, 'record'], 'data': []}
+            out['Owner'] = info.loc[t_id, 'Team'] if team_names else self.owners[t_id-1]
             for pos in order:
                 out['data'].append({'Slot': pos,
                                     'FFPts': d.loc[pos, 'FFPts_real'],
